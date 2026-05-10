@@ -1,0 +1,316 @@
+#!/bin/bash
+
+set -e
+
+clear
+
+echo "[+] HTTP Custom Secure Installer"
+
+# =========================
+# PEDIR DOMINIO
+# =========================
+
+read -p "Dominio/subdominio apuntando a esta VPS: " DOMAIN
+
+if [ -z "$DOMAIN" ]; then
+    echo "Dominio inválido"
+    exit 1
+fi
+
+# =========================
+# INSTALAR PAQUETES
+# =========================
+
+apt update -y
+
+apt install nginx php-fpm php-cli certbot python3-certbot-nginx curl -y
+
+PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
+
+# =========================
+# CREAR DIRECTORIOS
+# =========================
+
+mkdir -p /var/www/private
+
+touch /var/www/private/access.log
+
+chmod 777 /var/www/private/access.log
+
+# =========================
+# ARCHIVOS HC
+# =========================
+
+echo "CONFIG NORMAL" > /var/www/private/config.hc
+
+echo "CONFIG TOKEN" > /var/www/private/token-conf.hc
+
+# =========================
+# GET NORMAL
+# =========================
+
+cat > /var/www/html/get.php << 'EOF'
+<?php
+
+$ip = $_SERVER['REMOTE_ADDR'];
+$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+
+$log_file = "/var/www/private/access.log";
+$file = "/var/www/private/config.hc";
+
+$limit_time = 43200;
+$current_time = time();
+
+
+// =========================
+// BLOQUEOS
+// =========================
+
+if (preg_match('/Mozilla|Chrome|Safari|Firefox|Edg/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (preg_match('/curl|Wget/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (strpos($accept, 'text/html') !== false) {
+    http_response_code(403);
+    exit;
+}
+
+if ($method !== 'GET') {
+    http_response_code(403);
+    exit;
+}
+
+
+// =========================
+// RATE LIMIT
+// =========================
+
+if (file_exists($log_file)) {
+
+    $lines = file($log_file, FILE_IGNORE_NEW_LINES);
+    $new_lines = [];
+
+    foreach ($lines as $line) {
+
+        if (trim($line) == '') continue;
+
+        list($saved_ip, $timestamp) = explode('|', $line);
+
+        if (($current_time - $timestamp) < $limit_time) {
+            $new_lines[] = $line;
+        }
+
+        if ($saved_ip === $ip) {
+
+            if (($current_time - $timestamp) < $limit_time) {
+
+                http_response_code(429);
+                exit;
+            }
+        }
+    }
+
+    file_put_contents($log_file, implode("\n", $new_lines) . "\n");
+}
+
+file_put_contents($log_file, "$ip|$current_time\n", FILE_APPEND);
+
+
+// =========================
+// SERVIR ARCHIVO
+// =========================
+
+if (!file_exists($file)) {
+
+    http_response_code(404);
+    exit;
+}
+
+header('Content-Type: application/octet-stream');
+header('Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"');
+header('Content-Length: ' . filesize($file));
+
+readfile($file);
+
+exit;
+
+?>
+EOF
+
+# =========================
+# GET TOKEN
+# =========================
+
+cat > /var/www/html/token.php << 'EOF'
+<?php
+
+$ip = $_SERVER['REMOTE_ADDR'];
+$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+
+$valid_token = "TOKEN123";
+
+if (!isset($_GET['token'])) {
+
+    http_response_code(403);
+    exit;
+}
+
+if ($_GET['token'] !== $valid_token) {
+
+    http_response_code(403);
+    exit;
+}
+
+
+// =========================
+// BLOQUEOS
+// =========================
+
+if (preg_match('/Mozilla|Chrome|Safari|Firefox|Edg/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (preg_match('/curl|Wget/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (strpos($accept, 'text/html') !== false) {
+    http_response_code(403);
+    exit;
+}
+
+if ($method !== 'GET') {
+    http_response_code(403);
+    exit;
+}
+
+
+// =========================
+// SERVIR ARCHIVO
+// =========================
+
+$file = "/var/www/private/token-conf.hc";
+
+if (!file_exists($file)) {
+
+    http_response_code(404);
+    exit;
+}
+
+header('Content-Type: application/octet-stream');
+header('Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"');
+header('Content-Length: ' . filesize($file));
+
+readfile($file);
+
+exit;
+
+?>
+EOF
+
+# =========================
+# NGINX
+# =========================
+
+cat > /etc/nginx/sites-available/default << EOF
+server {
+
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name $DOMAIN;
+
+    root /var/www/html;
+
+    index index.php index.html index.htm;
+
+    location / {
+
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ \.php$ {
+
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php${PHP_VERSION}-fpm.sock;
+    }
+
+    location ~ /\.ht {
+
+        deny all;
+    }
+}
+EOF
+
+# =========================
+# RESTART
+# =========================
+
+systemctl restart php${PHP_VERSION}-fpm
+systemctl restart nginx
+
+# =========================
+# SSL
+# =========================
+
+echo
+echo "[+] Configurando HTTPS..."
+
+certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email -d $DOMAIN
+
+systemctl restart nginx
+
+# =========================
+# FINAL
+# =========================
+
+clear
+
+echo
+echo "[+] INSTALACION COMPLETADA"
+echo
+
+echo "======================================="
+echo "CONFIG NORMAL (SIN TOKEN)"
+echo "======================================="
+echo
+echo "URL:"
+echo "https://$DOMAIN/get.php"
+echo
+echo "ARCHIVO:"
+echo "/var/www/private/config.hc"
+echo
+
+echo "======================================="
+echo "CONFIG PRIVADA (TOKEN)"
+echo "======================================="
+echo
+echo "URL:"
+echo "https://$DOMAIN/token.php?token=TOKEN123"
+echo
+echo "ARCHIVO:"
+echo "/var/www/private/token-conf.hc"
+echo
+
+echo "======================================="
+echo "REEMPLAZAR CONFIGS"
+echo "======================================="
+echo
+echo "NORMAL:"
+echo "cp nuevo.hc /var/www/private/config.hc"
+echo
+echo "TOKEN:"
+echo "cp privado.hc /var/www/private/token-conf.hc"
+echo
