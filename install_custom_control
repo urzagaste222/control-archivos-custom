@@ -52,6 +52,106 @@ echo "CONFIG TOKEN" > /var/www/private/token-conf.hc
 cat > /var/www/html/get.php << 'EOF'
 <?php
 
+$ip = $_SERVER['REMOTE_ADDR'];
+$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'] ?? '';
+
+$log_file = "/var/www/private/access.log";
+$file = "/var/www/private/config.hc";
+
+$limit_time = 43200;
+$current_time = time();
+
+
+// =========================
+// BLOQUEOS
+// =========================
+
+if (preg_match('/Mozilla|Chrome|Safari|Firefox|Edg/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (preg_match('/curl|Wget/i', $user_agent)) {
+    http_response_code(403);
+    exit;
+}
+
+if (strpos($accept, 'text/html') !== false) {
+    http_response_code(403);
+    exit;
+}
+
+if ($method !== 'GET') {
+    http_response_code(403);
+    exit;
+}
+
+
+// =========================
+// RATE LIMIT
+// =========================
+
+if (file_exists($log_file)) {
+
+    $lines = file($log_file, FILE_IGNORE_NEW_LINES);
+    $new_lines = [];
+
+    foreach ($lines as $line) {
+
+        if (trim($line) == '') continue;
+
+        list($saved_ip, $timestamp) = explode('|', $line);
+
+        if (($current_time - $timestamp) < $limit_time) {
+            $new_lines[] = $line;
+        }
+
+        if ($saved_ip === $ip) {
+
+            if (($current_time - $timestamp) < $limit_time) {
+
+                http_response_code(429);
+                exit;
+            }
+        }
+    }
+
+    file_put_contents($log_file, implode("\n", $new_lines) . "\n");
+}
+
+file_put_contents($log_file, "$ip|$current_time\n", FILE_APPEND);
+
+
+// =========================
+// SERVIR ARCHIVO
+// =========================
+
+if (!file_exists($file)) {
+
+    http_response_code(404);
+    exit;
+}
+
+header('Content-Type: application/octet-stream');
+header('Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"');
+header('Content-Length: ' . filesize($file));
+
+readfile($file);
+
+exit;
+
+?>
+EOF
+
+# =========================
+# GET TOKEN
+# =========================
+
+cat > /var/www/html/token.php << 'EOF'
+<?php
+
 $token = $_GET['token'] ?? '';
 
 $tokens_file = "/var/www/private/tokens.db";
@@ -128,81 +228,6 @@ header('Content-Length: ' . filesize($file));
 readfile($file);
 
 exit;
-?>
-EOF
-
-# =========================
-# GET TOKEN
-# =========================
-
-cat > /var/www/html/token.php << 'EOF'
-<?php
-
-$ip = $_SERVER['REMOTE_ADDR'];
-$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
-$method = $_SERVER['REQUEST_METHOD'] ?? '';
-
-$valid_token = "TOKEN123";
-
-if (!isset($_GET['token'])) {
-
-    http_response_code(403);
-    exit;
-}
-
-if ($_GET['token'] !== $valid_token) {
-
-    http_response_code(403);
-    exit;
-}
-
-
-// =========================
-// BLOQUEOS
-// =========================
-
-if (preg_match('/Mozilla|Chrome|Safari|Firefox|Edg/i', $user_agent)) {
-    http_response_code(403);
-    exit;
-}
-
-if (preg_match('/curl|Wget/i', $user_agent)) {
-    http_response_code(403);
-    exit;
-}
-
-if (strpos($accept, 'text/html') !== false) {
-    http_response_code(403);
-    exit;
-}
-
-if ($method !== 'GET') {
-    http_response_code(403);
-    exit;
-}
-
-
-// =========================
-// SERVIR ARCHIVO
-// =========================
-
-$file = "/var/www/private/token-conf.hc";
-
-if (!file_exists($file)) {
-
-    http_response_code(404);
-    exit;
-}
-
-header('Content-Type: application/octet-stream');
-header('Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"');
-header('Content-Length: ' . filesize($file));
-
-readfile($file);
-
-exit;
-
 ?>
 EOF
 
