@@ -52,81 +52,64 @@ echo "CONFIG TOKEN" > /var/www/private/token-conf.hc
 cat > /var/www/html/get.php << 'EOF'
 <?php
 
-$ip = $_SERVER['REMOTE_ADDR'];
-$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$accept = $_SERVER['HTTP_ACCEPT'] ?? '';
-$method = $_SERVER['REQUEST_METHOD'] ?? '';
+$token = $_GET['token'] ?? '';
 
-$log_file = "/var/www/private/access.log";
-$file = "/var/www/private/config.hc";
+$tokens_file = "/var/www/private/tokens.db";
+$download_log = "/var/www/private/downloads.log";
 
-$limit_time = 43200;
-$current_time = time();
+$file = "/var/www/private/token-conf.hc";
 
-
-// =========================
-// BLOQUEOS
-// =========================
-
-if (preg_match('/Mozilla|Chrome|Safari|Firefox|Edg/i', $user_agent)) {
+if (!file_exists($tokens_file)) {
     http_response_code(403);
     exit;
 }
 
-if (preg_match('/curl|Wget/i', $user_agent)) {
-    http_response_code(403);
-    exit;
-}
+$lines = file($tokens_file, FILE_IGNORE_NEW_LINES);
 
-if (strpos($accept, 'text/html') !== false) {
-    http_response_code(403);
-    exit;
-}
+$new_lines = [];
 
-if ($method !== 'GET') {
-    http_response_code(403);
-    exit;
-}
+$valid = false;
 
+foreach ($lines as $line) {
 
-// =========================
-// RATE LIMIT
-// =========================
+    if (trim($line) == '') continue;
 
-if (file_exists($log_file)) {
+    list($saved_token, $max_dl, $used_dl, $expire) = explode('|', $line);
 
-    $lines = file($log_file, FILE_IGNORE_NEW_LINES);
-    $new_lines = [];
+    if ($saved_token == $token) {
 
-    foreach ($lines as $line) {
-
-        if (trim($line) == '') continue;
-
-        list($saved_ip, $timestamp) = explode('|', $line);
-
-        if (($current_time - $timestamp) < $limit_time) {
-            $new_lines[] = $line;
+        if (time() > $expire) {
+            continue;
         }
 
-        if ($saved_ip === $ip) {
-
-            if (($current_time - $timestamp) < $limit_time) {
-
-                http_response_code(429);
-                exit;
-            }
+        if ($used_dl >= $max_dl) {
+            continue;
         }
+
+        $used_dl++;
+
+        $valid = true;
+
+        $ip = $_SERVER['REMOTE_ADDR'];
+
+        file_put_contents(
+            $download_log,
+            date("Y-m-d H:i:s") .
+            " | IP: $ip | TOKEN: $token\n",
+            FILE_APPEND
+        );
     }
 
-    file_put_contents($log_file, implode("\n", $new_lines) . "\n");
+    $new_lines[] = "$saved_token|$max_dl|$used_dl|$expire";
 }
 
-file_put_contents($log_file, "$ip|$current_time\n", FILE_APPEND);
+file_put_contents($tokens_file, implode("\n", $new_lines) . "\n");
 
+if (!$valid) {
 
-// =========================
-// SERVIR ARCHIVO
-// =========================
+    http_response_code(403);
+    exit;
+}
 
 if (!file_exists($file)) {
 
@@ -135,13 +118,16 @@ if (!file_exists($file)) {
 }
 
 header('Content-Type: application/octet-stream');
-header('Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"');
+
+header(
+'Content-Disposition: attachment; filename="'.rand(1000,9999).'.hc"'
+);
+
 header('Content-Length: ' . filesize($file));
 
 readfile($file);
 
 exit;
-
 ?>
 EOF
 
