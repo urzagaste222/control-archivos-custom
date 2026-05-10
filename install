@@ -1,0 +1,48 @@
+#!/bin/bash
+
+set -e
+
+clear
+
+echo "[+] Instalando HC Manager..."
+
+# =========================
+# DESCARGAR MANAGER
+# =========================
+
+curl -L \
+https://raw.githubusercontent.com/urzagaste222/control-archivos-custom/refs/heads/main/install_custom_control
+
+curl -L \
+https://raw.githubusercontent.com/urzagaste222/control-archivos-custom/refs/heads/main/hc-manager \
+-o /usr/local/bin/hc-manager
+
+# =========================
+# PERMISOS
+# =========================
+
+chmod +x /usr/local/bin/hc-manager
+
+# =========================
+# CREAR DIRECTORIOS
+# =========================
+
+mkdir -p /var/www/private
+
+touch /var/www/private/tokens.db
+touch /var/www/private/downloads.log
+
+chmod 666 /var/www/private/tokens.db
+chmod 666 /var/www/private/downloads.log
+
+# =========================
+# FINAL
+# =========================
+
+echo
+echo "[+] HC Manager instalado"
+echo
+echo "Ejecutar con:"
+echo
+echo "hc-manager"
+echo
