@@ -49,9 +49,9 @@ chmod 666 /var/www/private/downloads.log
 # ARCHIVOS HC
 # =========================
 
-echo "CONFIG NORMAL" > /var/www/private/config.hc
+touch /var/www/private/config.hc
 
-echo "CONFIG TOKEN" > /var/www/private/token-conf.hc
+touch /var/www/private/token-conf.hc
 
 # =========================
 # GET NORMAL
