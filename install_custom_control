@@ -243,7 +243,7 @@ EOF
 # NGINX
 # =========================
 
-cat > /etc/nginx/sites-available/default << EOF
+cat > /etc/nginx/sites-available/default << 'EOF'
 server {
 
     listen 80 default_server;
@@ -277,7 +277,7 @@ EOF
 # HC MANAGER
 # =========================
 
-cat > /usr/local/bin/hc-manager << EOF
+cat > /usr/local/bin/hc-manager << 'EOF'
 #!/bin/bash
 
 DOMAIN=$(grep server_name /etc/nginx/sites-enabled/default | head -n1 | awk '{print $2}' | sed 's/;//')
