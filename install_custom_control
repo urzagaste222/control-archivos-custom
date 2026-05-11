@@ -37,6 +37,14 @@ touch /var/www/private/access.log
 
 chmod 777 /var/www/private/access.log
 
+mkdir -p /var/www/private
+
+touch /var/www/private/tokens.db
+touch /var/www/private/downloads.log
+
+chmod 666 /var/www/private/tokens.db
+chmod 666 /var/www/private/downloads.log
+
 # =========================
 # ARCHIVOS HC
 # =========================
@@ -266,6 +274,294 @@ server {
 EOF
 
 # =========================
+# HC MANAGER
+# =========================
+
+cat > /usr/local/bin/hc-manager << EOF
+#!/bin/bash
+
+DOMAIN=$(grep server_name /etc/nginx/sites-enabled/default | head -n1 | awk '{print $2}' | sed 's/;//')
+
+PRIVATE_DIR="/var/www/private"
+TOKENS_FILE="$PRIVATE_DIR/tokens.db"
+DOWNLOAD_LOG="$PRIVATE_DIR/downloads.log"
+
+mkdir -p $PRIVATE_DIR
+
+touch $TOKENS_FILE
+touch $DOWNLOAD_LOG
+
+clear
+
+while true; do
+
+echo "======================================="
+echo " HTTP CUSTOM MANAGER"
+echo "======================================="
+echo
+echo "1) Generar link SIN token"
+echo "2) Generar link CON token"
+echo "3) Ver descargas"
+echo "4) Mover archivo HC"
+echo "5) Listar archivos HC"
+echo "6) Ver tokens activos"
+echo "7) Eliminar token"
+echo "0) Salir"
+echo
+read -p "Selecciona una opción: " opt
+
+case $opt in
+
+1)
+
+clear
+
+echo "======================================="
+echo "CONFIG PUBLICA"
+echo "======================================="
+echo
+
+if [ ! -f "$PRIVATE_DIR/config.hc" ]; then
+    echo "[!] No existe:"
+    echo "$PRIVATE_DIR/config.hc"
+    echo
+    read -p "ENTER para continuar..."
+    continue
+fi
+
+chmod 644 "$PRIVATE_DIR/config.hc"
+
+echo "[+] LINK:"
+echo
+echo "https://$DOMAIN/get.php"
+echo
+read -p "ENTER para continuar..."
+;;
+
+2)
+
+clear
+
+echo "======================================="
+echo "CONFIG TOKEN"
+echo "======================================="
+echo
+
+if [ ! -f "$PRIVATE_DIR/token-conf.hc" ]; then
+    echo "[!] No existe:"
+    echo "$PRIVATE_DIR/token-conf.hc"
+    echo
+    read -p "ENTER para continuar..."
+    continue
+fi
+
+read -p "Cantidad máxima de descargas: " MAXDL
+
+read -p "Minutos de duración: " MINUTES
+
+TOKEN=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
+
+EXPIRE=$(date +%s)
+EXPIRE=$((EXPIRE + MINUTES*60))
+
+echo "$TOKEN|$MAXDL|0|$EXPIRE" >> $TOKENS_FILE
+
+chmod 644 "$PRIVATE_DIR/token-conf.hc"
+
+echo
+echo "[+] TOKEN CREADO"
+echo
+echo "https://$DOMAIN/token.php?token=$TOKEN"
+echo
+echo "Descargas máximas: $MAXDL"
+echo "Expira en: $MINUTES minutos"
+echo
+read -p "ENTER para continuar..."
+;;
+
+3)
+
+clear
+
+echo "======================================="
+echo "DESCARGAS"
+echo "======================================="
+echo
+
+if [ ! -s "$DOWNLOAD_LOG" ]; then
+    echo "Sin registros"
+else
+    cat $DOWNLOAD_LOG
+fi
+
+echo
+read -p "ENTER para continuar..."
+;;
+
+4)
+
+clear
+
+echo "======================================="
+echo "MOVER ARCHIVO HC"
+echo "======================================="
+echo
+
+echo "[+] Archivos disponibles:"
+echo
+
+find . -maxdepth 1 -name "*.hc"
+
+echo
+read -p "Nombre del archivo: " FILE
+
+if [ ! -f "$FILE" ]; then
+    echo
+    echo "[!] Archivo no encontrado"
+    echo
+    read -p "ENTER para continuar..."
+    continue
+fi
+
+echo
+echo "1) Config pública"
+echo "2) Config token"
+echo
+
+read -p "Destino: " DEST
+
+if [ "$DEST" == "1" ]; then
+
+    cp "$FILE" "$PRIVATE_DIR/config.hc"
+
+    echo
+    echo "[+] Movido a:"
+    echo "$PRIVATE_DIR/config.hc"
+
+elif [ "$DEST" == "2" ]; then
+
+    cp "$FILE" "$PRIVATE_DIR/token-conf.hc"
+
+    echo
+    echo "[+] Movido a:"
+    echo "$PRIVATE_DIR/token-conf.hc"
+
+else
+
+    echo
+    echo "[!] Opción inválida"
+
+fi
+
+echo
+read -p "ENTER para continuar..."
+;;
+
+5)
+
+clear
+
+echo "======================================="
+echo "ARCHIVOS HC"
+echo "======================================="
+echo
+
+find $PRIVATE_DIR -name "*.hc"
+
+echo
+read -p "ENTER para continuar..."
+;;
+
+6)
+
+clear
+
+echo "======================================="
+echo "TOKENS ACTIVOS"
+echo "======================================="
+echo
+
+if [ ! -s "$TOKENS_FILE" ]; then
+
+    echo "No hay tokens"
+
+else
+
+    while IFS='|' read TOKEN MAX USED EXP; do
+
+        NOW=$(date +%s)
+
+        REST=$((EXP - NOW))
+
+        if [ $REST -lt 0 ]; then
+            STATUS="EXPIRADO"
+        else
+            STATUS="$((REST/60)) min restantes"
+        fi
+
+        echo
+        echo "TOKEN: $TOKEN"
+        echo "MAX: $MAX"
+        echo "USADOS: $USED"
+        echo "ESTADO: $STATUS"
+        echo
+
+    done < $TOKENS_FILE
+
+fi
+
+echo
+read -p "ENTER para continuar..."
+;;
+
+7)
+
+clear
+
+echo "======================================="
+echo "ELIMINAR TOKEN"
+echo "======================================="
+echo
+
+cat $TOKENS_FILE
+
+echo
+read -p "Token a eliminar: " DEL
+
+grep -v "^$DEL|" $TOKENS_FILE > /tmp/tokens.tmp
+
+mv /tmp/tokens.tmp $TOKENS_FILE
+
+echo
+echo "[+] Token eliminado"
+echo
+
+read -p "ENTER para continuar..."
+;;
+
+0)
+
+clear
+exit
+;;
+
+*)
+
+echo
+echo "[!] Opción inválida"
+sleep 1
+;;
+
+esac
+
+clear
+
+done
+EOF
+
+chmod +x /usr/local/bin/hc-manager
+
+# =========================
 # RESTART
 # =========================
 
@@ -324,4 +620,13 @@ echo "cp nuevo.hc /var/www/private/config.hc"
 echo
 echo "TOKEN:"
 echo "cp privado.hc /var/www/private/token-conf.hc"
+echo
+
+echo "======================================="
+echo "[+] HC Manager instalado"
+echo "======================================="
+echo
+echo "Ejecutar con:"
+echo
+echo "hc-manager"
 echo
