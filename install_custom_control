@@ -243,7 +243,7 @@ EOF
 # NGINX
 # =========================
 
-cat > /etc/nginx/sites-available/default << 'EOF'
+cat > /etc/nginx/sites-available/default << EOF
 server {
 
     listen 80 default_server;
